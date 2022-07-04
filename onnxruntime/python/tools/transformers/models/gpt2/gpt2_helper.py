@@ -228,6 +228,7 @@ class Gpt2Helper:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(position_ids < 0, 0)
             position_ids = position_ids[:, past_sequence_length:].to(position_ids_dtype)
+            position_ids = position_ids.contiguous()
 
         return Gpt2Inputs(input_ids, position_ids, attention_mask, past)
 
@@ -523,7 +524,7 @@ class Gpt2Helper:
             model_type="gpt2",
             num_heads=num_attention_heads,
             hidden_size=hidden_size,
-            opt_level=0,
+            opt_level=1,
             optimization_options=optimization_options,
             use_gpu=False,
         )
@@ -913,8 +914,6 @@ class Gpt2Helper:
         """Generate random inputs and measure average latency of Onnx Runtime."""
 
         config: GPT2Config = model.config
-
-        output_buffers = None
         if use_io_binding:
             output_shapes = Gpt2Helper.get_output_shapes(
                 batch_size, past_sequence_length, sequence_length, config, model_class
@@ -939,11 +938,11 @@ class Gpt2Helper:
         )
 
         if use_io_binding:
-            _, latency = Gpt2Helper.onnxruntime_inference(ort_session, dummy_inputs, total_runs)
-        else:
             _, latency = Gpt2Helper.onnxruntime_inference_with_binded_io(
                 ort_session, dummy_inputs, output_buffers, output_shapes, total_runs
             )
+        else:
+            _, latency = Gpt2Helper.onnxruntime_inference(ort_session, dummy_inputs, total_runs)
 
         return latency
 
