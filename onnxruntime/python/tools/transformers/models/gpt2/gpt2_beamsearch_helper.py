@@ -14,7 +14,7 @@ from typing import Dict, List, Union
 
 import numpy
 import torch
-from gpt2_helper import Gpt2Helper, Gpt2Inputs, MyGPT2LMHeadModel, MyGPT2LMHeadModel_NoPadding, MyGPT2Model
+from gpt2_helper import Gpt2Helper, Gpt2Inputs, MyGPT2LMHeadModel, MyGPT2LMHeadModel_NoPadding, MyGPT2Model, MyBloomLMHeadModel
 from transformers import GPT2Config, GPT2LMHeadModel
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -354,6 +354,7 @@ class GPT2LMHeadModel_ConfigurableOneStepSearch(GPT2LMHeadModel):
 # Maps model class name to a tuple of model class, name of first output and use padding or not
 MODEL_CLASSES = {
     "GPT2LMHeadModel": (MyGPT2LMHeadModel, "logits", True),
+    "MyBloomLMHeadModel": (MyBloomLMHeadModel, "logits", True),
     "GPT2LMHeadModel_NoPadding": (MyGPT2LMHeadModel_NoPadding, "logits", False),
     "GPT2Model": (MyGPT2Model, "last_state", True),
     "GPT2LMHeadModel_BeamSearchStep": (

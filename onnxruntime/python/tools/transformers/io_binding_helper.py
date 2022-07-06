@@ -165,7 +165,8 @@ class IOBindingHelper:
             )
 
         if position_ids is not None:
-            assert position_ids.is_contiguous()
+            if not position_ids.is_contiguous():
+                position_ids = position_ids.contiguous()
             io_binding.bind_input(
                 "position_ids",
                 position_ids.device.type,

@@ -18,7 +18,7 @@ from typing import Dict, List, Tuple, Union
 import numpy
 import onnx
 import torch
-from transformers import GPT2Config, GPT2LMHeadModel, GPT2Model, TFGPT2Model
+from transformers import GPT2Config, GPT2LMHeadModel, GPT2Model, TFGPT2Model, BloomForCausalLM
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -114,6 +114,23 @@ class MyGPT2LMHeadModel(GPT2LMHeadModel):
 
         return MyGPT2Model.post_process(result, self.config.n_layer)
 
+class MyBloomLMHeadModel(BloomForCausalLM):
+    """Here we wrap a class for Onnx model conversion for BloomLMHeadModel with past state."""
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def forward(self, input_ids, attention_mask, *past):
+        result = super().forward(
+            input_ids,
+            # position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past,
+            return_dict=False,
+        )
+
+        return MyGPT2Model.post_process(result, self.config.n_layer)
+
 
 class MyGPT2LMHeadModel_NoPadding(GPT2LMHeadModel):
     """Here we wrap a class for Onnx model conversion for GPT2LMHeadModel with past state and no padding.
@@ -133,6 +150,7 @@ class MyGPT2LMHeadModel_NoPadding(GPT2LMHeadModel):
 # Maps model class name to a tuple of model class, name of first output and use padding or not
 MODEL_CLASSES = {
     "GPT2LMHeadModel": (MyGPT2LMHeadModel, "logits", True),
+    "MyBloomLMHeadModel": (MyBloomLMHeadModel, "logits", True),
     "GPT2LMHeadModel_NoPadding": (MyGPT2LMHeadModel_NoPadding, "logits", False),
     "GPT2Model": (MyGPT2Model, "last_state", True),
 }
@@ -196,8 +214,8 @@ class Gpt2Helper:
         past_shape = [
             2,
             batch_size,
-            num_attention_heads,
             past_sequence_length,
+            num_attention_heads,
             int(hidden_size / num_attention_heads),
         ]
 
@@ -228,7 +246,6 @@ class Gpt2Helper:
             position_ids = attention_mask.long().cumsum(-1) - 1
             position_ids.masked_fill_(position_ids < 0, 0)
             position_ids = position_ids[:, past_sequence_length:].to(position_ids_dtype)
-            position_ids = position_ids.contiguous()
 
         return Gpt2Inputs(input_ids, position_ids, attention_mask, past)
 
@@ -256,8 +273,8 @@ class Gpt2Helper:
         present_state_shape = [
             2,
             batch_size,
-            num_attention_heads,
             past_sequence_length + sequence_length,
+            num_attention_heads,
             int(hidden_size / num_attention_heads),
         ]
 
@@ -397,6 +414,9 @@ class Gpt2Helper:
         config: GPT2Config = model.config
         num_layer = config.n_layer
         dummy_inputs = Gpt2Helper.get_dummy_inputs(
+            # batch_size=5,
+            # past_sequence_length=4,
+            # sequence_length=3,
             batch_size=1,
             past_sequence_length=1,
             sequence_length=1,
@@ -413,6 +433,8 @@ class Gpt2Helper:
             attention_mask_dtype=attention_mask_dtype,
         )
         input_list = dummy_inputs.to_list()
+        # #TODO: if position_ids is None, we must add None to the input_list; only if forward() takes position_ids as input
+        # input_list = [input_list[0]] + [None] + input_list[1:]
 
         with torch.no_grad():
             outputs = model(*input_list)
@@ -437,9 +459,9 @@ class Gpt2Helper:
             output_names[0]: {0: "batch_size", 1: "seq_len"},
         }
         for name in past_names:
-            dynamic_axes[name] = {1: "batch_size", 3: "past_seq_len"}
+            dynamic_axes[name] = {1: "batch_size", 2: "past_seq_len"} #TODO: bloom past_key_value shape is difference
         for name in present_names:
-            dynamic_axes[name] = {1: "batch_size", 3: "total_seq_len"}
+            dynamic_axes[name] = {1: "batch_size", 2: "total_seq_len"}
 
         input_names = ["input_ids"]
         if has_position_ids:
@@ -524,7 +546,7 @@ class Gpt2Helper:
             model_type="gpt2",
             num_heads=num_attention_heads,
             hidden_size=hidden_size,
-            opt_level=1,
+            opt_level=0,
             optimization_options=optimization_options,
             use_gpu=False,
         )
@@ -914,6 +936,8 @@ class Gpt2Helper:
         """Generate random inputs and measure average latency of Onnx Runtime."""
 
         config: GPT2Config = model.config
+
+        output_buffers = None
         if use_io_binding:
             output_shapes = Gpt2Helper.get_output_shapes(
                 batch_size, past_sequence_length, sequence_length, config, model_class
@@ -937,12 +961,12 @@ class Gpt2Helper:
             attention_mask_dtype=attention_mask_dtype,
         )
 
-        if use_io_binding:
+        if not use_io_binding:
+            _, latency = Gpt2Helper.onnxruntime_inference(ort_session, dummy_inputs, total_runs)
+        else:
             _, latency = Gpt2Helper.onnxruntime_inference_with_binded_io(
                 ort_session, dummy_inputs, output_buffers, output_shapes, total_runs
             )
-        else:
-            _, latency = Gpt2Helper.onnxruntime_inference(ort_session, dummy_inputs, total_runs)
 
         return latency
 

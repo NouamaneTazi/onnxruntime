@@ -34,9 +34,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from benchmark_helper import Precision, create_onnxruntime_session, prepare_environment, setup_logger
 from quantize_helper import QuantizeHelper
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("")
-logger.setLevel(logging.DEBUG)
 
 
 def parse_arguments(argv=None):
@@ -119,7 +117,7 @@ def parse_arguments(argv=None):
         "--test_cases",
         required=False,
         type=int,
-        default=5,
+        default=1000,
         help="Number of test cases per run for parity",
     )
     parser.add_argument(
@@ -127,12 +125,12 @@ def parse_arguments(argv=None):
         "--test_runs",
         required=False,
         type=int,
-        default=1,
+        default=10,
         help="Number of runs for parity. It is used for significance test.",
     )
 
     parser.add_argument("--verbose", required=False, action="store_true")
-    parser.set_defaults(verbose=True)
+    parser.set_defaults(verbose=False)
 
     parser.add_argument("-e", "--use_external_data_format", required=False, action="store_true")
     parser.set_defaults(use_external_data_format=False)
