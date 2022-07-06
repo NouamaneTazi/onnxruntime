@@ -430,7 +430,7 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
     model_size_in_MB = int(get_onnx_model_size(output_path, args.use_external_data_format) / 1024 / 1024)
 
     session = create_onnxruntime_session(output_path, args.use_gpu, enable_all_optimization=True, verbose=args.verbose)
-    if model_type == "default" and session is not None:
+    if session is not None:
         parity_result = gpt2helper.test_parity(
             session,
             model,

@@ -620,7 +620,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
 
         output_name = MODEL_CLASSES[model_class][1]
 
-        if model_class == "GPT2LMHeadModel_BeamSearchStep":
+        if model_class == "GPT2LMHeadModel_BeamSearchStep" or model_class == "BloomLMHeadModel_BeamSearchStep":
             last_state_shape = [batch_size, beam_size]
         else:
             last_state_shape = [
@@ -628,7 +628,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
                 past_sequence_length - context_len + sequence_length + 1,
             ]
 
-        if model_class == "GPT2LMHeadModel_BeamSearchStep":
+        if model_class == "GPT2LMHeadModel_BeamSearchStep" or model_class == "BloomLMHeadModel_BeamSearchStep":
             if step == 0:
                 present_state_shape = [
                     2,
@@ -665,7 +665,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         output_shapes["output_selected_indices"] = [1, batch_size * beam_size]
         output_shapes["output_log_probs"] = [batch_size, beam_size]
         output_shapes["output_unfinished_sents"] = [batch_size, beam_size]
-        if model_class == "GPT2LMHeadModel_BeamSearchStep":
+        if model_class == "GPT2LMHeadModel_BeamSearchStep" or model_class == "BloomLMHeadModel_BeamSearchStep":
             output_shapes["current_step_results"] = [
                 batch_size * beam_size,
                 past_sequence_length - context_len + sequence_length + 1,
@@ -701,7 +701,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         atol=1e-03,
     ):
         """Returns True if torch and ORT outputs are close for given thresholds, and False otherwise."""
-        if model_class == "GPT2LMHeadModel_BeamSearchStep":
+        if model_class == "GPT2LMHeadModel_BeamSearchStep" or model_class == "BloomLMHeadModel_BeamSearchStep":
             results_id = -4
             num_layers = len(ort_outputs) - 6
         else:
@@ -832,7 +832,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         # add dynamic output axes
         present_axes = {1: "batch_size", 2: "cur_seq_len"}
 
-        if isinstance(model, GPT2LMHeadModel_BeamSearchStep):
+        if isinstance(model, GPT2LMHeadModel_BeamSearchStep) or isinstance(model, BloomLMHeadModel_BeamSearchStep):
             dynamic_axes["last_state"] = {0: "batch_size", 1: "beam_size"}
         else:
             dynamic_axes["last_state"] = {
@@ -1029,18 +1029,24 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         is_float16=False,
         rtol=5e-4,
         atol=5e-4,
-        total_test_cases=100,
+        test_cases_per_run=10000,
+        total_runs=1,
         use_io_binding=True,
         model_class="GPT2LMHeadModel_BeamSearchStep",
         has_position_ids=True,
         has_attention_mask=True,
+        input_ids_dtype=torch.int32,
+        position_ids_dtype=torch.int32,
+        attention_mask_dtype=torch.int32,
+        verbose=False,
+        enable_pickle_output=False,
     ):
         """Generate random inputs and compare the results of PyTorch and Onnx Runtime."""
 
         config: GPT2Config = model.config
 
         logger.info(
-            f"Running parity test (rtol={rtol}, atol={atol}, test_cases={total_test_cases}, use_io_binding={use_io_binding} model_class={model_class} is_float16={is_float16}) ..."
+            f"Running parity test (rtol={rtol}, atol={atol}, test_cases={test_cases_per_run}, use_io_binding={use_io_binding} model_class={model_class} is_float16={is_float16}) ..."
         )
 
         max_batch_size = 1
@@ -1063,6 +1069,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
             output_buffers = Gpt2BeamSearchHelper.get_output_buffers(max_output_shapes, device, is_float16)
 
         passed_test_cases = 0
+        total_test_cases = test_cases_per_run * total_runs
         for _ in range(total_test_cases):
             past_sequence_length = random.randint(0, max_past_seq_len)
             sequence_length = random.randint(1 + past_sequence_length, max_seq_len + past_sequence_length)
