@@ -6,7 +6,7 @@
 """
 This converts GPT2 model to onnx. Examples:
 (1) Convert pretrained model 'gpt2' to ONNX
-   python convert_to_onnx.py -m gpt2 --output gpt2.onnx
+   python convert_to_onnx.py -m gpt2 --output gpt2.onnx -o
 (2) Convert pretrained model 'distilgpt2' to ONNX, and use optimizer to get float16 model.
    python convert_to_onnx.py -m distilgpt2 --output distilgpt2_fp16.onnx -o -p fp16
 (3) Convert a model check point to ONNX, and run optimization and int8 quantization
@@ -34,7 +34,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from benchmark_helper import Precision, create_onnxruntime_session, prepare_environment, setup_logger
 from quantize_helper import QuantizeHelper
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("")
+logger.setLevel(logging.DEBUG)
 
 
 def parse_arguments(argv=None):
@@ -117,7 +119,7 @@ def parse_arguments(argv=None):
         "--test_cases",
         required=False,
         type=int,
-        default=1000,
+        default=5,
         help="Number of test cases per run for parity",
     )
     parser.add_argument(
@@ -125,12 +127,12 @@ def parse_arguments(argv=None):
         "--test_runs",
         required=False,
         type=int,
-        default=10,
+        default=1,
         help="Number of runs for parity. It is used for significance test.",
     )
 
     parser.add_argument("--verbose", required=False, action="store_true")
-    parser.set_defaults(verbose=False)
+    parser.set_defaults(verbose=True)
 
     parser.add_argument("-e", "--use_external_data_format", required=False, action="store_true")
     parser.set_defaults(use_external_data_format=False)

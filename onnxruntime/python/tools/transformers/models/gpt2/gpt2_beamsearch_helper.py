@@ -638,6 +638,9 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         use_external_data_format: bool = False,
         has_position_ids: bool = True,
         has_attention_mask: bool = True,
+        input_ids_dtype: torch.dtype = torch.int32,
+        position_ids_dtype: torch.dtype = torch.int32,
+        attention_mask_dtype: torch.dtype = torch.int32,
     ):
         """Export GPT-2 model with past state to ONNX model."""
         assert isinstance(
@@ -659,6 +662,9 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
             float16=False,
             has_position_ids=has_position_ids,
             has_attention_mask=has_attention_mask,
+            input_ids_dtype=input_ids_dtype,
+            position_ids_dtype=position_ids_dtype,
+            attention_mask_dtype=attention_mask_dtype,
         )
         input_list = dummy_inputs.to_list()
 
