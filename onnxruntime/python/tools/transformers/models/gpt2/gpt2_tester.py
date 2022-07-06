@@ -147,8 +147,8 @@ class Gpt2Tester:
         past_shape = [
             2,
             self.batch_size,
+            0,  # TODO: works for BLOOM but not for gpt2
             num_attention_heads,
-            0,
             hidden_size // num_attention_heads,
         ]
         for i in range(num_layer):

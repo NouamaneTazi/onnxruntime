@@ -208,7 +208,7 @@ class BloomLMHeadModel_BeamSearchStep(BloomForCausalLM):
             torch.ones_like(next_token_ids, dtype=torch.int) * self.config.eos_token_id
         )
 
-        # get the next full input_ids
+        # get the next full input_ids (append the new predicted tokens to each sentence)
         current_step_results = torch.cat([prev_step_results, next_token_ids.unsqueeze(-1)], dim=-1).contiguous()
 
         prev_step_scores = prev_step_scores.view(self.config.batch_size, -1, prev_step_scores.size(-1))
@@ -633,8 +633,8 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
                 present_state_shape = [
                     2,
                     batch_size,
-                    num_attention_heads,
                     past_sequence_length + sequence_length,
+                    num_attention_heads,
                     int(hidden_size / num_attention_heads),
                 ]
             else:
@@ -644,16 +644,16 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
                 present_state_shape = [
                     2,
                     batch_size * num_seq,
-                    num_attention_heads,
                     past_sequence_length + sequence_length,
+                    num_attention_heads,
                     int(hidden_size / num_attention_heads),
                 ]
         else:
             present_state_shape = [
                 2,
                 batch_size,
-                num_attention_heads,
                 past_sequence_length - context_len + sequence_length,
+                num_attention_heads,
                 int(hidden_size / num_attention_heads),
             ]
 
@@ -668,12 +668,16 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         if model_class == "GPT2LMHeadModel_BeamSearchStep" or model_class == "BloomLMHeadModel_BeamSearchStep":
             output_shapes["current_step_results"] = [
                 batch_size * beam_size,
-                past_sequence_length - context_len + sequence_length + 1,
+                past_sequence_length + sequence_length + 1,
             ]
         output_shapes["current_step_scores"] = [
             batch_size * beam_size,
-            past_sequence_length - context_len + 2,
+            past_sequence_length - context_len + sequence_length + 2,
         ]
+
+        if step == 0:
+            output_shapes["current_step_results"] = [4, context_len + 1]
+            output_shapes["current_step_scores"] = [4, 2]
         print("output_shapes", output_shapes)
         return output_shapes
 
@@ -1119,6 +1123,69 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         if passed_test_cases > 0.95 * total_test_cases:
             logger.info(f"Parity is good: passed rate={int(passed_test_cases*100/total_test_cases):.0f}%")
         return passed_test_cases == total_test_cases
+
+    @staticmethod
+    def test_performance(
+        ort_session,
+        model,
+        device,
+        is_float16=False,
+        total_runs=100,
+        use_io_binding=True,
+        model_class="GPT2LMHeadModel",
+        has_position_ids=True,
+        has_attention_mask=True,
+        input_ids_dtype=torch.int32,
+        position_ids_dtype=torch.int32,
+        attention_mask_dtype=torch.int32,
+        batch_size=8,
+        sequence_length=1,
+        past_sequence_length=32,
+    ):
+        """Generate random inputs and measure average latency of Onnx Runtime."""
+
+        config: GPT2Config = model.config
+        beam_size = 4
+
+        output_buffers = None
+        if use_io_binding:
+            output_shapes = Gpt2BeamSearchHelper.get_output_shapes(
+                batch_size,
+                past_sequence_length,
+                past_sequence_length,
+                sequence_length,
+                beam_size,
+                0,
+                config,
+                model_class,
+            )
+            output_buffers = Gpt2BeamSearchHelper.get_output_buffers(output_shapes, device, is_float16)
+
+        dummy_inputs = Gpt2BeamSearchHelper.get_dummy_inputs(
+            batch_size,
+            past_sequence_length,
+            sequence_length,
+            config.num_attention_heads,
+            config.hidden_size,
+            config.n_layer,
+            config.vocab_size,
+            device,
+            is_float16,
+            has_position_ids,
+            has_attention_mask,
+            input_ids_dtype=input_ids_dtype,
+            position_ids_dtype=position_ids_dtype,
+            attention_mask_dtype=attention_mask_dtype,
+        )
+
+        if not use_io_binding:
+            _, latency = Gpt2BeamSearchHelper.onnxruntime_inference(ort_session, dummy_inputs)
+        else:
+            _, latency = Gpt2BeamSearchHelper.onnxruntime_inference_with_binded_io(
+                ort_session, dummy_inputs, output_buffers, output_shapes
+            )
+
+        return latency
 
     @staticmethod
     def torchscript(model, config, device, has_position_ids=True, has_attention_mask=True):
