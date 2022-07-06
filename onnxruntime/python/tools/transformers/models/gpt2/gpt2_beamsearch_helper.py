@@ -14,8 +14,15 @@ from typing import Dict, List, Union
 
 import numpy
 import torch
-from gpt2_helper import Gpt2Helper, Gpt2Inputs, MyGPT2LMHeadModel, MyGPT2LMHeadModel_NoPadding, MyGPT2Model, MyBloomLMHeadModel
-from transformers import GPT2Config, GPT2LMHeadModel
+from gpt2_helper import (
+    Gpt2Helper,
+    Gpt2Inputs,
+    MyBloomLMHeadModel,
+    MyGPT2LMHeadModel,
+    MyGPT2LMHeadModel_NoPadding,
+    MyGPT2Model,
+)
+from transformers import BloomForCausalLM, GPT2Config, GPT2LMHeadModel
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from io_binding_helper import TypeHelper
@@ -99,6 +106,97 @@ class GPT2LMHeadModel_BeamSearchStep(GPT2LMHeadModel):
 
         next_token_ids = next_token_ids.view(self.config.batch_size, -1).gather(-1, selected_index_flat)
 
+        prev_step_results = prev_step_results.view(self.config.batch_size, -1, prev_step_results.size(-1))
+        prev_step_results = prev_step_results.gather(
+            1, selected_input_seq.unsqueeze(-1).repeat(1, 1, prev_step_results.size(-1))
+        )
+
+        output_unfinished_sents = input_unfinished_sents.gather(1, selected_input_seq)
+        # Add ones_like to walkaround error like Shape mismatch attempting to re-use buffer. {1,1} != {1,4}
+        output_unfinished_sents = output_unfinished_sents & next_token_ids.ne(
+            torch.ones_like(next_token_ids, dtype=torch.int) * self.config.eos_token_id
+        )
+
+        # get the next full input_ids
+        current_step_results = torch.cat([prev_step_results, next_token_ids.unsqueeze(-1)], dim=-1).contiguous()
+
+        prev_step_scores = prev_step_scores.view(self.config.batch_size, -1, prev_step_scores.size(-1))
+        prev_step_scores = prev_step_scores.gather(
+            1, selected_input_seq.unsqueeze(-1).repeat(1, 1, prev_step_scores.size(-1))
+        )
+        current_step_scores = torch.cat([prev_step_scores, output_log_probs.unsqueeze(-1)], dim=-1).contiguous()
+
+        return (
+            next_token_ids,
+            present_flat,
+            selected_input_seq,
+            output_log_probs,
+            output_unfinished_sents,
+            current_step_results.view(self.config.batch_size * self.config.beam_size, -1),
+            current_step_scores.view(self.config.batch_size * self.config.beam_size, -1),
+        )
+
+
+class BloomLMHeadModel_BeamSearchStep(BloomForCausalLM):
+    """Here we wrap a class for Onnx model conversion for GPT2LMHeadModel with past state and one
+    step beam search."""
+
+    def __init__(self, config, batch_size, beam_size):
+        super().__init__(config)
+        self.config.batch_size = batch_size
+        self.config.beam_size = beam_size
+
+    def forward(
+        self,
+        input_ids,
+        # position_ids,
+        attention_mask,
+        beam_select_idx,
+        input_log_probs,
+        input_unfinished_sents,
+        prev_step_results,  # depends on position_ids
+        prev_step_scores,
+        *past,
+    ):
+        input_ids = input_ids.view(self.config.batch_size, -1, input_ids.size(-1))
+        past = [past[i].index_select(1, beam_select_idx[0]) for i in range(len(past))]
+        result = super().forward(
+            input_ids.view(-1, input_ids.size(-1)),
+            # position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_values=past,
+            return_dict=False,
+        )
+        logits_flat, present_flat = MyGPT2Model.post_process(result, self.config.n_layer)
+        next_token_logits = logits_flat[:, -1].view(self.config.batch_size, -1, logits_flat.size(-1))
+        next_token_log_probs = torch.log_softmax(next_token_logits, dim=-1)
+        next_token_log_probs, next_token_ids = torch.topk(
+            next_token_log_probs,
+            self.config.beam_size,
+            dim=-1,
+            largest=True,
+            sorted=True,
+        )
+
+        # finished sentences is always with EOS, and all but the first one has -inf, so that they will be automatically dropped in the round of beam search.
+        finished_sents = ~input_unfinished_sents
+        next_token_log_probs.masked_fill_(finished_sents.unsqueeze(-1), -numpy.inf)
+        next_token_log_probs[..., 0].masked_fill_(finished_sents, 0)
+        next_token_ids.masked_fill_(finished_sents.unsqueeze(-1), self.config.eos_token_id)
+        output_log_probs = input_log_probs.unsqueeze(-1) + next_token_log_probs
+
+        # select N sequences from beams of each input, sorted by sequence probability
+        output_log_probs = output_log_probs.view(self.config.batch_size, -1)  # shape=(batch, beam_size^2)
+        output_log_probs, selected_index_flat = output_log_probs.topk(
+            self.config.beam_size, dim=-1, largest=True, sorted=True
+        )  # output shape=(batch, beam_size)
+
+        # select the correspondent sentences/next tokens
+        selected_input_seq = torch.div(
+            selected_index_flat, self.config.beam_size, rounding_mode="trunc"
+        )  # selected_index_flat // self.config.beam_size
+
+        next_token_ids = next_token_ids.view(self.config.batch_size, -1).gather(-1, selected_index_flat)
         prev_step_results = prev_step_results.view(self.config.batch_size, -1, prev_step_results.size(-1))
         prev_step_results = prev_step_results.gather(
             1, selected_input_seq.unsqueeze(-1).repeat(1, 1, prev_step_results.size(-1))
@@ -362,6 +460,11 @@ MODEL_CLASSES = {
         "last_state",
         True,
     ),
+    "BloomLMHeadModel_BeamSearchStep": (
+        BloomLMHeadModel_BeamSearchStep,
+        "last_state",
+        True,
+    ),
     "GPT2LMHeadModel_ConfigurableOneStepSearch": (
         GPT2LMHeadModel_ConfigurableOneStepSearch,
         "last_state",
@@ -472,7 +575,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         beam_select_idx = torch.zeros([1, batch_size], device=device).long()
         input_log_probs = torch.zeros([batch_size, 1], dtype=float_type, device=device)
         input_unfinished_sents = torch.ones([batch_size, 1], dtype=torch.bool, device=device)
-        if has_position_ids:
+        if has_position_ids or True:
             prev_step_results = torch.randint(
                 low=0,
                 high=vocab_size - 1,
@@ -646,7 +749,11 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         """Export GPT-2 model with past state to ONNX model."""
         assert isinstance(
             model,
-            (GPT2LMHeadModel_BeamSearchStep, GPT2LMHeadModel_ConfigurableOneStepSearch),
+            (
+                GPT2LMHeadModel_BeamSearchStep,
+                GPT2LMHeadModel_ConfigurableOneStepSearch,
+                BloomLMHeadModel_BeamSearchStep,
+            ),
         )
 
         config: GPT2Config = model.config
@@ -677,7 +784,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
 
         output_names = ["last_state"] + present_names
 
-        if has_position_ids:
+        if has_position_ids or True:
             output_names += [
                 "output_selected_indices",
                 "output_log_probs",
@@ -698,9 +805,9 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
             output_names[0]: {0: "batch_size", 1: "seq_len"},
         }
         for name in past_names:
-            dynamic_axes[name] = {1: "batch_size", 3: "past_seq_len"}
+            dynamic_axes[name] = {1: "batch_size", 2: "past_seq_len"}
         for name in present_names:
-            dynamic_axes[name] = {1: "batch_size", 3: "cur_seq_len"}
+            dynamic_axes[name] = {1: "batch_size", 2: "cur_seq_len"}
 
         input_names = ["input_ids"]
         if has_position_ids:
@@ -715,7 +822,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         input_names.append("input_log_probs")
         dynamic_axes["input_unfinished_sents"] = {0: "batch_size", 1: "beam_size"}
         input_names.append("input_unfinished_sents")
-        if has_position_ids:
+        if has_position_ids or True:
             dynamic_axes["prev_step_results"] = {0: "batch_size", 1: "total_seq_len"}
             input_names.append("prev_step_results")
         dynamic_axes["prev_step_scores"] = {0: "batch_size", 1: "total_seq_len"}
@@ -723,7 +830,7 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         input_names.extend(past_names)
 
         # add dynamic output axes
-        present_axes = {1: "batch_size", 3: "cur_seq_len"}
+        present_axes = {1: "batch_size", 2: "cur_seq_len"}
 
         if isinstance(model, GPT2LMHeadModel_BeamSearchStep):
             dynamic_axes["last_state"] = {0: "batch_size", 1: "beam_size"}

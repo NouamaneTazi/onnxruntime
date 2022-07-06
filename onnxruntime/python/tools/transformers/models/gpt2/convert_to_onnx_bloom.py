@@ -58,7 +58,8 @@ def parse_arguments(argv=None):
         type=str,
         # default="GPT2LMHeadModel",
         # default="GPT2LMHeadModel_BeamSearchStep",
-        default="MyBloomLMHeadModel",
+        # default="MyBloomLMHeadModel",
+        default="BloomLMHeadModel_BeamSearchStep",
         choices=list(MODEL_CLASSES.keys()),
         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()),
     )
@@ -138,10 +139,10 @@ def parse_arguments(argv=None):
     )
 
     parser.add_argument("--verbose", required=False, action="store_true")
-    parser.set_defaults(verbose=False)
+    parser.set_defaults(verbose=True)
 
     parser.add_argument("-e", "--use_external_data_format", required=False, action="store_true")
-    parser.set_defaults(use_external_data_format=False)
+    parser.set_defaults(use_external_data_format=True)
 
     parser.add_argument("--overwrite", required=False, action="store_true")
     parser.set_defaults(overwrite=False)
@@ -314,22 +315,60 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
     model_class = MODEL_CLASSES[args.model_class][0]
     use_padding = MODEL_CLASSES[args.model_class][2]
 
-    model_type = "default"
+    model_type = "beam_search_step"
 
     gpt2helper = Gpt2HelperFactory.create_helper(model_type)
     gpt2tester = Gpt2TesterFactory.create_tester(model_type)
 
     config = AutoConfig.from_pretrained(args.model_name_or_path)
-    model = model_class.from_pretrained(args.model_name_or_path, config=config)
+    if model_type == "beam_search_step":
+        model = model_class.from_pretrained(
+            args.model_name_or_path,
+            config=config,
+            batch_size=1,
+            beam_size=args.beam_size,
+        )
+    elif model_type == "configurable_one_step_search":
+        model = model_class.from_pretrained(
+            args.model_name_or_path,
+            config=config,
+            batch_size=1,
+            beam_size=args.beam_size,
+            ignore_eos=args.ignore_eos,
+            temperature=args.temperature,
+            repetition_penalty=args.repetition_penalty,
+            excluded_token_ids=args.excluded_token_ids,
+            length_penalty=args.length_penalty,
+            do_sample=args.do_sample,
+            do_sample_top_p=args.do_sample_top_p,
+            do_sample_top_k=args.do_sample_top_k,
+        )
+    else:
+        model = model_class.from_pretrained(
+            args.model_name_or_path,
+            config=config,
+        )
 
     device = torch.device("cuda:0" if args.use_gpu else "cpu")
     model.eval().to(device)
 
-    raw_onnx_model = "onnx_models/gpu" if args.use_gpu else "onnx_models/cpu"
-
+    raw_onnx_model = "onnx_models/gpu/" if args.use_gpu else "onnx_models/cpu/"
+    raw_onnx_model += args.model_name_or_path.replace("/", "_")
     raw_onnx_model += "/bloom-model.onnx"
     raw_onnx_model = Path(raw_onnx_model)
     raw_onnx_model.parent.mkdir(parents=True, exist_ok=True)
+    raw_onnx_model = raw_onnx_model.as_posix()
+
+    # onnx_model_paths = gpt2helper.get_onnx_paths(
+    #     output_dir,
+    #     args.model_name_or_path,
+    #     args.model_class,
+    #     new_folder=args.use_external_data_format,
+    #     remove_existing=["fp32", "fp16", "int8"],
+    # )  # Do not remove raw model to save time in parity test
+
+    # raw_onnx_model = onnx_model_paths["raw"]
+
     if not Path(raw_onnx_model).exists():
         logger.info(f"Exporting ONNX model to {raw_onnx_model}")
         gpt2helper.export_onnx(
@@ -415,7 +454,7 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
             model,
             device,
             is_io_float16,
-            total_runs=args.test_runs,
+            total_runs=100,
             use_io_binding=False,
             model_class=args.model_class,
             has_position_ids=False,
