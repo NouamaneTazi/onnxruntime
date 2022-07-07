@@ -1,6 +1,7 @@
 # %%
 import torch
-from gpt2_beamsearch_helper import BloomLMHeadModel_BeamSearchStep, Gpt2BeamSearchHelper
+from gpt2_beamsearch_helper import BloomLMHeadModel_BeamSearchStep, Gpt2BeamSearchHelper, Gpt2BeamSearchInputs
+from gpt2_helper import Gpt2Inputs
 from packaging import version
 from transformers import AutoConfig
 
@@ -23,7 +24,7 @@ from transformers import AutoTokenizer
 # %%
 import onnxruntime
 
-EXAMPLE_Text = ["best hotel in bay area."]
+EXAMPLE_Text = ["My name is Philipp and I live in Germany."]
 
 
 def get_tokenizer(model_name_or_path):
@@ -75,6 +76,32 @@ ort_inputs = {
 for i, past_i in enumerate(empty_past):
     ort_inputs[f"past_{i}"] = numpy.ascontiguousarray(past_i.cpu().numpy())
 ort_outputs = session.run(None, ort_inputs)
+ort_outputs
+
+# %%
+# ## Pytorch Inference ##
+
+model = BloomLMHeadModel_BeamSearchStep.from_pretrained(
+    model_name_or_path,
+    config=config,
+    batch_size=1,
+    beam_size=4,
+    # cache_dir=cache_dir,
+)
+inputs = Gpt2BeamSearchInputs(
+    input_ids,
+    empty_past,
+    None,
+    attention_mask,
+    beam_select_idx,
+    input_log_probs,
+    input_unfinished_sents,
+    input_ids,
+    prev_step_scores,
+)
+outputs = Gpt2BeamSearchHelper.pytorch_inference(model, inputs)
+
+outputs
 
 # %% [markdown]
 # ## ONNX Runtime Inference with IO Binding ##
