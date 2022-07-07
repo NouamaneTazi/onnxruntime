@@ -46,9 +46,10 @@ def parse_arguments(argv=None):
         "-m",
         "--model_name_or_path",
         # default="bigscience/bigscience-small-testing",
-        default="bigscience/bloom-350m",
+        # default="bigscience/bloom-350m",
         # default="bigscience/bloom-760m",
         # default="bigscience/bloom-6b3",
+        default="bigscience/bloom",
         # default="gpt2",
         type=str,
         help="Model path, or pretrained model name in the list: " + ", ".join(PRETRAINED_GPT2_MODELS),
@@ -322,13 +323,18 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
     gpt2helper = Gpt2HelperFactory.create_helper(model_type)
     gpt2tester = Gpt2TesterFactory.create_tester(model_type)
 
-    config = AutoConfig.from_pretrained(args.model_name_or_path, use_cache=True)
+    config = AutoConfig.from_pretrained(
+        args.model_name_or_path,
+        use_cache=True,
+        # cache_dir=cache_dir
+    )
     if model_type == "beam_search_step":
         model = model_class.from_pretrained(
             args.model_name_or_path,
             config=config,
             batch_size=1,
             beam_size=args.beam_size,
+            # cache_dir=cache_dir,
         )
     elif model_type == "configurable_one_step_search":
         model = model_class.from_pretrained(
@@ -344,11 +350,13 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
             do_sample=args.do_sample,
             do_sample_top_p=args.do_sample_top_p,
             do_sample_top_k=args.do_sample_top_k,
+            # cache_dir=cache_dir,
         )
     else:
         model = model_class.from_pretrained(
             args.model_name_or_path,
             config=config,
+            # cache_dir=cache_dir,
         )
 
     device = torch.device("cuda:0" if args.use_gpu else "cpu")
