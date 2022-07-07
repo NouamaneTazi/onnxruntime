@@ -1,11 +1,7 @@
 # %%
 import torch
 from gpt2_beamsearch_helper import BloomLMHeadModel_BeamSearchStep, Gpt2BeamSearchHelper, Gpt2BeamSearchInputs
-from gpt2_helper import Gpt2Inputs
-from packaging import version
 from transformers import AutoConfig
-
-from onnxruntime import __version__ as ort_verison
 
 model_name_or_path = "bigscience/bloom-350m"
 config = AutoConfig.from_pretrained(model_name_or_path)

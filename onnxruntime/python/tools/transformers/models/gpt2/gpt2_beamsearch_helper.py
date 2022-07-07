@@ -678,7 +678,6 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
         if step == 0:
             output_shapes["current_step_results"] = [4, context_len + 1]
             output_shapes["current_step_scores"] = [4, 2]
-        print("output_shapes", output_shapes)
         return output_shapes
 
     @staticmethod
