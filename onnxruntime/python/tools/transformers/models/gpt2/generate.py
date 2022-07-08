@@ -19,19 +19,19 @@ def inference_with_io_binding(
     prev_step_scores,
     step,
     context_len,
+    beam_size,
 ):
     output_shapes = Gpt2BeamSearchHelper.get_output_shapes(
         batch_size=1,
         context_len=context_len,
         past_sequence_length=past[0].size(2),
         sequence_length=input_ids.size(1),
-        beam_size=4,
+        beam_size=beam_size,
         step=step,
         config=config,
         model_class="BloomLMHeadModel_BeamSearchStep",
     )
     output_buffers = Gpt2BeamSearchHelper.get_output_buffers(output_shapes, device)
-    print("output_shapes", output_shapes)
 
     io_binding = Gpt2BeamSearchHelper.prepare_io_binding(
         session,
@@ -142,18 +142,21 @@ def update(output, step, batch_size, beam_size, context_length, prev_attention_m
 
 
 EXAMPLE_Text = ["My name is Philipp and I live in Germany."]
-onnx_model_path = "/home/nouamane/projects/onnxruntime/onnx_models/cpu/bigscience_bloom-350m/bloom-model.onnx"
-model_name_or_path = "bigscience/bloom-350m"
-use_onnxruntime_io = False
+# onnx_model_path = "/home/nouamane/projects/onnxruntime/onnx_models/cpu/bigscience_bloom-350m/bloom-model.onnx"
+# model_name_or_path = "bigscience/bloom-350m"
+onnx_model_path = "/home/nouamane/projects/onnxruntime/onnx_models/cpu/bigscience_bloom-6b3/bloom-model.onnx"
+model_name_or_path = "bigscience/bloom-6b3"
+use_onnxruntime_io = True
 num_tokens_to_produce = 30
+beam_size = 4  # fixed when exporting model in final TopK before output_log_probs
 
 config = AutoConfig.from_pretrained(model_name_or_path)
 device = torch.device("cpu")
 
 ort_session = onnxruntime.InferenceSession(
     onnx_model_path,
-    # providers=["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
-    providers=["CPUExecutionProvider"],
+    providers=["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"],
+    # providers=["CPUExecutionProvider"],
 )
 
 
@@ -216,7 +219,6 @@ ort_inputs = {
 for i, past_i in enumerate(past):
     ort_inputs[f"past_{i}"] = numpy.ascontiguousarray(past_i.cpu().numpy())
 batch_size = input_ids.size(0)
-beam_size = 4
 context_length = input_ids.size(-1)
 
 for step in range(num_tokens_to_produce):
@@ -234,6 +236,7 @@ for step in range(num_tokens_to_produce):
             inputs["prev_step_scores"],
             step,
             context_length,
+            beam_size,
         )
     else:
         outputs = ort_session.run(None, ort_inputs)

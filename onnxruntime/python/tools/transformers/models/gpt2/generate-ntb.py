@@ -130,7 +130,6 @@ def inference_with_io_binding(
         model_class="BloomLMHeadModel_BeamSearchStep",
     )
     output_buffers = Gpt2BeamSearchHelper.get_output_buffers(output_shapes, device)
-    print("output_shapes", output_shapes)
 
     io_binding = Gpt2BeamSearchHelper.prepare_io_binding(
         session,

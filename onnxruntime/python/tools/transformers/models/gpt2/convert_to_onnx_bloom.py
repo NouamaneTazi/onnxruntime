@@ -46,10 +46,10 @@ def parse_arguments(argv=None):
         "-m",
         "--model_name_or_path",
         # default="bigscience/bigscience-small-testing",
-        # default="bigscience/bloom-350m",
+        default="bigscience/bloom-350m",
         # default="bigscience/bloom-760m",
         # default="bigscience/bloom-6b3",
-        default="bigscience/bloom",
+        # default="bigscience/bloom",
         # default="gpt2",
         type=str,
         help="Model path, or pretrained model name in the list: " + ", ".join(PRETRAINED_GPT2_MODELS),
@@ -142,7 +142,7 @@ def parse_arguments(argv=None):
     )
 
     parser.add_argument("--verbose", required=False, action="store_true")
-    parser.set_defaults(verbose=True)
+    parser.set_defaults(verbose=False)
 
     parser.add_argument("-e", "--use_external_data_format", required=False, action="store_true")
     parser.set_defaults(use_external_data_format=True)
@@ -161,7 +161,7 @@ def parse_arguments(argv=None):
     parser.add_argument(
         "--beam_size",
         type=int,
-        default=4,
+        default=1,
         help="Beam size if greedy/top-p/top-k sampling is needed",
     )
 
@@ -359,10 +359,11 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
             # cache_dir=cache_dir,
         )
 
-    device = torch.device("cuda:0" if args.use_gpu else "cpu")
+    use_gpu_for_export = False
+    device = torch.device("cuda:0" if use_gpu_for_export else "cpu")
     model.eval().to(device)
 
-    raw_onnx_model = "onnx_models/gpu/" if args.use_gpu else "onnx_models/cpu/"
+    raw_onnx_model = f"onnx_models/beam-{args.beam_size}/"
     if args.optimize_onnx:
         raw_onnx_model = raw_onnx_model[:-1] + "_optimized/"
     raw_onnx_model += args.model_name_or_path.replace("/", "_")
@@ -441,8 +442,11 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
     logger.info(f"Output path: {output_path}")
     model_size_in_MB = int(get_onnx_model_size(output_path, args.use_external_data_format) / 1024 / 1024)
 
+    device = torch.device("cuda:0" if args.use_gpu else "cpu")
+    model.eval().to(device)
+
     session = create_onnxruntime_session(output_path, args.use_gpu, enable_all_optimization=True, verbose=args.verbose)
-    if session is not None:
+    if False and session is not None:
         parity_result = gpt2helper.test_parity(
             session,
             model,
@@ -557,13 +561,12 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
             result.update(row)
             csv_writer.writerow(row)
 
-    if False and args.input_test_file:
+    if args.input_test_file:
         test_inputs = []
         # Each line of test file is a JSON string like:
         # {"input_ids": [[14698, 257, 1310, 13688, 319, 326]]}
         read_f = [
-            '{"input_ids": [[14698, 257, 1310, 13688, 319, 326]]}',
-            '{"input_ids": [[14698, 257, 1310, 13688, 319, 326]]}',
+            '{"input_ids": [[59414,  2782,   632,  1119,  5148,   632, 70335, 22811,   473, 18100]]}',
         ]
         for _, line in enumerate(read_f):
             line = line.rstrip()
@@ -632,7 +635,7 @@ def main(argv=None, experiment_name="", run_id=0, csv_filename="gpt2_parity_resu
             max_steps=24,
             max_inputs=0,
             verbose=args.verbose,
-            save_test_data=3,
+            save_test_data=0,
             save_test_data_dir=Path(output_path).parent,
         )
 
