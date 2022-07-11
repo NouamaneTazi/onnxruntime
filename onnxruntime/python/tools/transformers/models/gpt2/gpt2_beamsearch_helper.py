@@ -674,10 +674,6 @@ class Gpt2BeamSearchHelper(Gpt2Helper):
             batch_size * beam_size,
             past_sequence_length - context_len + sequence_length + 2,
         ]
-
-        # if step == 0:
-        #     output_shapes["current_step_results"] = [batch_size * beam_size, context_len + 1]
-        #     output_shapes["current_step_scores"] = [batch_size * beam_size, 2]
         return output_shapes
 
     @staticmethod
